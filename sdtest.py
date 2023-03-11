@@ -142,9 +142,10 @@ async def generate(update: Update):
             "fix": "1",
             "file": "false",
             "negative": "",
-            "prompt": message_parts[0].strip(),
+            "prompt": "",
         }
         
+        options["prompt"] = message_parts[0].strip()
         if len(message_parts) > 1:
             try:
                 for i in range(1, len(message_parts)):
