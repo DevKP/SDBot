@@ -100,7 +100,6 @@ lock = asyncio.Lock()
 
 async def jobs_loop(context: ContextTypes.DEFAULT_TYPE):
     while True:
-    #print("hello from loop")
         if len(running_jobs) == 0:
             await asyncio.sleep(0.5)
             continue
@@ -118,7 +117,7 @@ def is_job_exists_old(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     return len(current_jobs) > 0
 
 def is_job_exists(name: str) -> bool:
-    return any((t["name"] == name for t in running_jobs))
+    return any(t["name"] == name for t in running_jobs)
 
 async def generate_job(update: Update) -> None:
     # await update.message.reply_text("Типу генерується")
@@ -126,7 +125,7 @@ async def generate_job(update: Update) -> None:
     # await update.message.reply_text("Ну типу зараз було б хотово, але пішов ти нахуй")
     await generate(update)
 
-async def generate(update: Update):  # sourcery skip: raise-specific-error
+async def generate(update: Update):
     messsage = update.message
     try:
         logger.info(rf"{messsage.text}")
@@ -146,9 +145,24 @@ async def generate(update: Update):  # sourcery skip: raise-specific-error
             "prompt": message_parts[0].strip(),
         }
         
-        try_get_command_parts(options)
-        try_get_samplers(options)
-        
+        if len(message_parts) > 1:
+            try:
+                for i in range(1, len(message_parts)):
+                    command_parts = message_parts[i].lower().strip().split(" ")
+
+                    if len(command_parts) != 2:
+                        raise Exception()
+
+                    options[command_parts[0].strip()] = command_parts[1].strip()
+            except Exception:
+                await messsage.reply_text("Помилка в налаштуваннях. /help")
+                return 
+
+        try:
+            options["s"] = samplers[options["s"].lower()]
+        except Exception:
+            await messsage.reply_text("Невідомий семплер. /samplers")
+            return
 
         if float(options["fix"]) > 3:
             await messsage.reply_html("<code>fix</code> - Максимальне значення = <code>3</code>.  /help")
@@ -231,29 +245,7 @@ Batch: {options["batch"]}
     except Exception as e:
         traceback.print_exc()
         await messsage.reply_text("Сталась помилка, спробуй ще.")
-
-async def try_get_command_parts(options: dict):
-    if len(message_parts) > 1:
-            try:
-                for i in range(1, len(message_parts)):
-                    command_parts = message_parts[i].lower().strip().split(" ")
-
-                    if len(command_parts) != 2:
-                        raise Exception()
-
-                    options[command_parts[0].strip()] = command_parts[1].strip()
-            except Exception:
-                await messsage.reply_text("Помилка в налаштуваннях. /help")
-                return
-
-async def try_get_samplers(options: dict):
-    try:
-        options["s"] = samplers[options["s"].lower()]
-    except Exception:
-        await messsage.reply_text("Невідомий семплер. /samplers")
-        return
-       
-        
+  
 async def prompt_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.message.chat_id
 
@@ -269,7 +261,6 @@ async def prompt_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
-
         [InlineKeyboardButton("Option 3", switch_inline_query_current_chat="/test")],
     ]
 
