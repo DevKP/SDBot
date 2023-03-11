@@ -1,4 +1,5 @@
 import logging
+from samplers import samplers
 
 from telegram import Message, __version__ as TG_VER
 
@@ -27,27 +28,6 @@ import time
 import json
 import io
 
-samplers = {
-  "euler_a": "Euler a",
-  "euler": "Euler",
-  "lms": "LMS",
-  "heun": "Heun",
-  "dpm_2": "DPM2",
-  "dpm_2_a": "DPM2 a",
-  "dpmpp_2s_a": "DPM++ 2S a",
-  "dpmpp_2m": "DPM++ 2M",
-  "dpmpp_sde": "DPM++ SDE",
-  "dpm_fast": "DPM fast",
-  "dpm_ad": "DPM adaptive",
-  "lms_ka": "LMS Karras",
-  "dpm_2_ka": "DPM2 Karras",
-  "dpm_2_a_ka": "DPM2 a Karras",
-  "dpmpp_2s_a_ka": "DPM++ 2S a Karras",
-  "dpmpp_2m_ka": "DPM++ 2M Karras",
-  "dpmpp_sde_ka": "DPM++ SDE Karras",
-  "ddim": "DDIM",
-  "plms": "PLMS"
-}
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -57,7 +37,7 @@ logger = logging.getLogger(__name__)
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     await update.message.reply_html(
-        rf"""Привіт! Просто надішли мені запит для генерації картинки і я все зроблю. 
+        """Привіт! Просто надішли мені запит для генерації картинки і я все зроблю. 
         
 Наприклад (натисни щоб скопіювати):
 <code>white kitty, cute, masterpiece, detailed</code>
@@ -115,12 +95,11 @@ async def samplers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 <code>euler_a</code>
 <code>dpmpp_sde_ka</code>""")
     
-running_jobs = list() 
+running_jobs = []
 lock = asyncio.Lock()
 
 async def jobs_loop(context: ContextTypes.DEFAULT_TYPE):
     while True:
-    #print("hello from loop")
         if len(running_jobs) == 0:
             await asyncio.sleep(0.5)
             continue
@@ -135,14 +114,10 @@ async def jobs_loop(context: ContextTypes.DEFAULT_TYPE):
 
 def is_job_exists_old(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
     current_jobs = context.job_queue.jobs()
-    if len(current_jobs) > 0:
-        return True
-    return False
+    return len(current_jobs) > 0
 
 def is_job_exists(name: str) -> bool:
-    if any(t["name"] == name for t in running_jobs):
-        return True
-    return False
+    return any(t["name"] == name for t in running_jobs)
 
 async def generate_job(update: Update) -> None:
     # await update.message.reply_text("Типу генерується")
@@ -155,62 +130,62 @@ async def generate(update: Update):
     try:
         logger.info(rf"{messsage.text}")
 
+        message_parts = messsage.text.split("-")
         options = {
-        "s": "ddim",
-        "seed": "-1",
-        "scale": "7",
-        "steps": "32",
-        "batch": "1",
-        "w": "512",
-        "h": "512",
-        "prompt": "",
-        "fix": "1",
-        "file": "false",
-        "negative": ""
+            "s": "ddim",
+            "seed": "-1",
+            "scale": "7",
+            "steps": "32",
+            "batch": "1",
+            "w": "512",
+            "h": "512",
+            "fix": "1",
+            "file": "false",
+            "negative": "",
+            "prompt": "",
         }
         
-        message_parts = messsage.text.split("-")
         options["prompt"] = message_parts[0].strip()
         if len(message_parts) > 1:
             try:
                 for i in range(1, len(message_parts)):
                     command_parts = message_parts[i].lower().strip().split(" ")
-                    
+
                     if len(command_parts) != 2:
                         raise Exception()
-                    
+
                     options[command_parts[0].strip()] = command_parts[1].strip()
-            except:
+            except Exception:
                 await messsage.reply_text("Помилка в налаштуваннях. /help")
-                return
-                
+                return 
+
         try:
             options["s"] = samplers[options["s"].lower()]
-        except:
+        except Exception:
             await messsage.reply_text("Невідомий семплер. /samplers")
             return
-            
+
         if float(options["fix"]) > 3:
             await messsage.reply_html("<code>fix</code> - Максимальне значення = <code>3</code>.  /help")
             return
-        
+
         if int(options["batch"]) > 5:
             await messsage.reply_html("<code>batch</code> - Максимальне значення = <code>5</code>.  /help")
             return
-            
+
         if int(options["steps"]) > 60:
             await messsage.reply_html("<code>steps</code> - Максимальне значення = <code>60</code>.  /help")
             return
-            
+
         if int(options["w"]) > 768 or int(options["h"]) > 768:
             await messsage.reply_html("<code>w/h</code> - Максимальне значення = <code>768 x 768</code>.  /help")
             return
-        
+
         #options['negative'] = "lowres, text, error, missing fingers, extra digit, fewer digits, cropped, (worst quality, low quality:1.4), jpeg artifacts, signature, bad anatomy, extra legs, extra arms, extra fingers, poorly drawn hands, poorly drawn feet, disfigured, out of frame, tiling, bad art, deformed, mutated, blurry, fuzzy, misshaped, mutant, gross, disgusting, ugly, watermark, watermarks," + options['negative']
         options['negative'] = "lowres, (((deformed))), bad anatomy, low res, text, error, missing fingers, fused fingers, (poorly drawn hands), extra digit, fewer digits, cropped, (worst quality, low quality:1.4), signature, extra legs, extra arms, extra fingers, poorly drawn hands, poorly drawn feet, disfigured, out of frame, tiling, bad art, deformed, mutation, mutated, fuzzy, misshaped, mutant, gross, disgusting, ugly, watermark, watermarks, fused breasts, bad breasts, poorly drawn breasts, extra breasts, huge haunch, huge thighs, huge calf, bad hands, fused hand, missing hand, disappearing arms, disappearing thigh, disappearing calf, (disappearing legs), poorly drawn legs, bad ears, poorly drawn ears, extra ears, heavy ears, missing ears, fused animal ears, bad face, bad animal ears, poorly drawn animal ears, extra animal ears, heavy animal ears, missing animal ears, one hand with more than 5 fingers, one hand with less than 5 fingers, one hand with more than 5 digit, one hand with less than 5 digit, short arm, (missing arms), missing thighs, missing calf, missing legs, (extra legs), mutation, duplicate, mutilated, poorly drawn hands, more than 1 left hand, more than 1 right hand, deformed, bad asshole, poorly drawn asshole, fused asshole, missing asshole, bad anus, (((bad pussy))), bad crotch, badcrotch seam, fused anus, fused pussy, fused anus, fused crotch, poorly drawn crotch, fused seam, poorly drawn anus, ((poorly drawn pussy)), poorly drawn crotch, (bad thigh gap), missing thigh gap, (fused thigh gap),  (poorly drawn thigh gap), poorly drawn anus, (missing clit), (bad clit), fused clit, colorful clit, pubic hair, bad breasts, poorly drawn breasts, extra breasts, bad hands, fused hand, missing hand, disappearing arms, disappearing thigh, disappearing calf, disappearing legs, fuse dears, bad ears, poorly drawn ears, extra ears, missing limb, (missing arms), bad asshole, poorly drawn asshole, fused asshole, missing asshole, bad anus, bad pussy, bad crotch, seam, fused anus, (fused pussy), fused anus, fused crotch, poorly drawn crotch, fused seam, poorly drawn anus, (poorly drawn pussy), poorly drawn crotch, seam, bad thigh gap, missing thigh gap, fused thigh gap, poorly drawn thigh gap, poorly drawn anus, bad collarbone, fused collarbone, missing collarbone" + options['negative']
         logger.info(rf"Generating with prompt: {options['prompt']}, sampler: {options['s']}")
         logger.info(options)
-        
+
         payload = {
             "prompt": options["prompt" ],
             "negative_prompt": options["negative"],
@@ -228,7 +203,7 @@ async def generate(update: Update):
             "hr_upscaler": "4x_foolhardy_Remacri",
             "hr_second_pass_steps": 0,
         }
-        
+
         estimate = float(options["steps"]) / 2.6
         if float(options["fix"]) > 1:
             estimate = estimate + float(options["steps"]) * 3.10
@@ -236,12 +211,12 @@ async def generate(update: Update):
 
         await messsage.reply_text(rf"""Генерація..
 Дуже приблизний час генерації: {str_estimate}""")
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.post("http://192.168.1.89:7860/sdapi/v1/txt2img", json=payload, timeout=1200) as response:
                 if response.status != 200:
                     raise Exception("Bad response")
-                
+
                 responseJson = await response.json()
 
                 images = list(map(lambda x: InputMediaPhoto(media=io.BytesIO(base64.b64decode(x))), responseJson["images"]))
@@ -259,20 +234,19 @@ Batch: {options["batch"]}
 
 @very_stable_bot""")
                 await messsage.reply_html(rf"""<code>{escaped_message}</code>""")
-                
+
                 if options["file"] == "true":
                     documents = []
                     for i in range(len(responseJson["images"])):
                         document = InputMediaDocument(media=io.BytesIO(base64.b64decode(responseJson["images"][i])), filename=rf"{random.randint(1, 99999)}_{int(info['seed'])+i}.png")
                         documents.append(document)
                     await messsage.reply_media_group(documents)
-        
+
         logger.info("Successfuly generated")
     except Exception as e:
         traceback.print_exc()
         await messsage.reply_text("Сталась помилка, спробуй ще.")
-        
-        
+  
 async def prompt_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.message.chat_id
 
@@ -288,21 +262,17 @@ async def prompt_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
-        
         [InlineKeyboardButton("Option 3", switch_inline_query_current_chat="/test")],
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_html(
-        rf"Hi!",
-        reply_markup=reply_markup,
-    )
+    await update.message.reply_html("Hi!", reply_markup=reply_markup)
    
 def main() -> None:
     """Start the bot."""
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token("6271238427:AAGA5n4wE6YHMM5g_b_HXetJX8ArQ0-JOZo").concurrent_updates(True).build()
+    application = Application.builder().token("6247027158:AAEBPb6FhDIxQlD429j3eVppnhpq5bGPbjo").concurrent_updates(True).build()
 
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -310,7 +280,6 @@ def main() -> None:
     application.add_handler(CommandHandler("test", test_command))
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, prompt_message))
-    application.add_handler()
     application.job_queue.run_once(jobs_loop, 0.5)
 
     application.run_polling()
