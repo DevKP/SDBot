@@ -14,17 +14,16 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"{TG_VER} version of this example, "
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
-from telegram import ForceReply, Update, InputMediaPhoto, InputMediaDocument, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InputMediaPhoto, InputMediaDocument, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from PIL import Image
 import traceback
 import datetime
-import threading
 import aiohttp
 import asyncio
 import base64
 import html
 import random
-import time
 import json
 import io
 
@@ -119,13 +118,10 @@ def is_job_exists_old(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
 def is_job_exists(name: str) -> bool:
     return any(t["name"] == name for t in running_jobs)
 
-async def generate_job(update: Update) -> None:
-    # await update.message.reply_text("Типу генерується")
-    # await asyncio.sleep(15)
-    # await update.message.reply_text("Ну типу зараз було б хотово, але пішов ти нахуй")
-    await generate(update)
+async def generate_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await generate(update, context)
 
-async def generate(update: Update):
+async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     messsage = update.message
     try:
         logger.info(rf"{messsage.text}")
@@ -211,6 +207,8 @@ async def generate(update: Update):
 
         await messsage.reply_text(rf"""Генерація..
 Дуже приблизний час генерації: {str_estimate}""")
+        
+        context.job_queue.run_once(live_preview_job, 0, chat_id=messsage.chat_id)
 
         async with aiohttp.ClientSession() as session:
             async with session.post("http://192.168.1.89:7860/sdapi/v1/txt2img", json=payload, timeout=1200) as response:
@@ -254,11 +252,46 @@ async def prompt_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Вже в черзі, спочатку почекай результат минулого запиту.")
         return    
     
-    running_jobs.append({"task": generate_job(update), "name": str(chat_id)})
+    running_jobs.append({"task": generate_job(update, context), "name": str(chat_id)})
     
     await update.message.reply_text(rf"""Ти {len(running_jobs)} в черзі на генерацію... В залежності від навантаженості це може зайняти до декількох хвилин..
 Час очікування: бог його знає.""")
     
+async def live_preview_job(context: ContextTypes.DEFAULT_TYPE):
+    await asyncio.sleep(2)
+
+    genMessage = await context.bot.send_photo(chat_id=context.job.chat_id, photo="placeholder.jpg")
+    info_message = await context.bot.send_message(chat_id=context.job.chat_id, text="...")
+    #img_message = Message()
+
+    async with aiohttp.ClientSession() as session:
+        while True:
+            async with session.get("http://192.168.1.89:7860/sdapi/v1/progress", timeout=200) as response:
+                if response.status != 200:
+                    raise Exception("Bad response")
+                
+                responseJson = await response.json()
+
+                if int(responseJson["state"]["job_count"]) == 0:
+                    await genMessage.delete()
+                    await info_message.delete()
+                    return
+                
+                try:
+                    if responseJson["current_image"] is not None:
+                        bytesArray = io.BytesIO(base64.b64decode(responseJson["current_image"]))
+                        image = Image.open(bytesArray)
+                        width, height = image.size
+                        image = image.resize((width * 4, height * 4))
+                        buf = io.BytesIO()
+                        image.save(buf, format='PNG')
+                        await info_message.edit_text(text=rf"{round(float(responseJson['progress'])*100)}%",)
+                        await genMessage.edit_media(media=InputMediaPhoto(media=buf.getvalue()))
+                except Exception:
+                    logger.error("Update preview error")
+                    pass
+
+            await asyncio.sleep(1)
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
