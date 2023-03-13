@@ -1,5 +1,6 @@
 import logging
 from samplers import samplers
+from errors import PassToUserException
 
 from telegram import Message, __version__ as TG_VER
 
@@ -16,6 +17,7 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
     )
 from telegram import Update, InputMediaPhoto, InputMediaDocument, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.error import BadRequest
 from PIL import Image
 import traceback
 import datetime
@@ -109,6 +111,7 @@ async def jobs_loop(context: ContextTypes.DEFAULT_TYPE):
         print("found job" + job["name"])
         await asyncio.gather(job["task"])
         running_jobs.remove(job)
+
         lock.release()
 
 def is_job_exists_old(name: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -121,69 +124,61 @@ def is_job_exists(name: str) -> bool:
 async def generate_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await generate(update, context)
 
-async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    messsage = update.message
-    try:
-        logger.info(rf"{messsage.text}")
-
-        message_parts = messsage.text.split("-")
-        options = {
-            "s": "ddim",
-            "seed": "-1",
-            "scale": "7",
-            "steps": "32",
-            "batch": "1",
-            "w": "512",
-            "h": "512",
-            "fix": "1",
-            "file": "false",
-            "negative": "",
-            "prompt": "",
-        }
-        
-        options["prompt"] = message_parts[0].strip()
-        if len(message_parts) > 1:
-            try:
-                for i in range(1, len(message_parts)):
-                    command_parts = message_parts[i].lower().strip().split(" ")
-
-                    if len(command_parts) != 2:
-                        raise Exception()
-
-                    options[command_parts[0].strip()] = command_parts[1].strip()
-            except Exception:
-                await messsage.reply_text("Помилка в налаштуваннях. /help")
-                return 
-
+def get_options(msg_text: str) -> dict:
+    message_parts = msg_text.split("-")
+    options = {
+        "s": "ddim",
+        "seed": "-1",
+        "scale": "7",
+        "steps": "32",
+        "batch": "1",
+        "w": "512",
+        "h": "512",
+        "fix": "1",
+        "file": "true",
+        "negative": "",
+        "prompt": "",
+    }
+    
+    options["prompt"] = message_parts[0].strip()
+    if len(message_parts) > 1:
         try:
-            options["s"] = samplers[options["s"].lower()]
+            for i in range(1, len(message_parts)):
+                command_parts = message_parts[i].lower().strip().split(" ")
+
+                if len(command_parts) != 2:
+                    raise Exception()
+
+                options[command_parts[0].strip()] = command_parts[1].strip()
         except Exception:
-            await messsage.reply_text("Невідомий семплер. /samplers")
-            return
+            raise PassToUserException("Помилка в налаштуваннях. /help")
 
-        if float(options["fix"]) > 3:
-            await messsage.reply_html("<code>fix</code> - Максимальне значення = <code>3</code>.  /help")
-            return
+    try:
+        options["s"] = samplers[options["s"].lower()]
+    except Exception:
+        raise PassToUserException("Невідомий семплер. /samplers")
 
-        if int(options["batch"]) > 5:
-            await messsage.reply_html("<code>batch</code> - Максимальне значення = <code>5</code>.  /help")
-            return
+    if float(options["fix"]) > 3:
+        raise PassToUserException("<code>fix</code> - Максимальне значення = <code>3</code>.  /help")
 
-        if int(options["steps"]) > 60:
-            await messsage.reply_html("<code>steps</code> - Максимальне значення = <code>60</code>.  /help")
-            return
+    if int(options["batch"]) > 5:
+        raise PassToUserException("<code>batch</code> - Максимальне значення = <code>5</code>.  /help")
 
-        if int(options["w"]) > 768 or int(options["h"]) > 768:
-            await messsage.reply_html("<code>w/h</code> - Максимальне значення = <code>768 x 768</code>.  /help")
-            return
+    if int(options["steps"]) > 60:
+        raise PassToUserException("<code>steps</code> - Максимальне значення = <code>60</code>.  /help")
 
-        #options['negative'] = "lowres, text, error, missing fingers, extra digit, fewer digits, cropped, (worst quality, low quality:1.4), jpeg artifacts, signature, bad anatomy, extra legs, extra arms, extra fingers, poorly drawn hands, poorly drawn feet, disfigured, out of frame, tiling, bad art, deformed, mutated, blurry, fuzzy, misshaped, mutant, gross, disgusting, ugly, watermark, watermarks," + options['negative']
-        options['negative'] = "lowres, (((deformed))), bad anatomy, low res, text, error, missing fingers, fused fingers, (poorly drawn hands), extra digit, fewer digits, cropped, (worst quality, low quality:1.4), signature, extra legs, extra arms, extra fingers, poorly drawn hands, poorly drawn feet, disfigured, out of frame, tiling, bad art, deformed, mutation, mutated, fuzzy, misshaped, mutant, gross, disgusting, ugly, watermark, watermarks, fused breasts, bad breasts, poorly drawn breasts, extra breasts, huge haunch, huge thighs, huge calf, bad hands, fused hand, missing hand, disappearing arms, disappearing thigh, disappearing calf, (disappearing legs), poorly drawn legs, bad ears, poorly drawn ears, extra ears, heavy ears, missing ears, fused animal ears, bad face, bad animal ears, poorly drawn animal ears, extra animal ears, heavy animal ears, missing animal ears, one hand with more than 5 fingers, one hand with less than 5 fingers, one hand with more than 5 digit, one hand with less than 5 digit, short arm, (missing arms), missing thighs, missing calf, missing legs, (extra legs), mutation, duplicate, mutilated, poorly drawn hands, more than 1 left hand, more than 1 right hand, deformed, bad asshole, poorly drawn asshole, fused asshole, missing asshole, bad anus, (((bad pussy))), bad crotch, badcrotch seam, fused anus, fused pussy, fused anus, fused crotch, poorly drawn crotch, fused seam, poorly drawn anus, ((poorly drawn pussy)), poorly drawn crotch, (bad thigh gap), missing thigh gap, (fused thigh gap),  (poorly drawn thigh gap), poorly drawn anus, (missing clit), (bad clit), fused clit, colorful clit, pubic hair, bad breasts, poorly drawn breasts, extra breasts, bad hands, fused hand, missing hand, disappearing arms, disappearing thigh, disappearing calf, disappearing legs, fuse dears, bad ears, poorly drawn ears, extra ears, missing limb, (missing arms), bad asshole, poorly drawn asshole, fused asshole, missing asshole, bad anus, bad pussy, bad crotch, seam, fused anus, (fused pussy), fused anus, fused crotch, poorly drawn crotch, fused seam, poorly drawn anus, (poorly drawn pussy), poorly drawn crotch, seam, bad thigh gap, missing thigh gap, fused thigh gap, poorly drawn thigh gap, poorly drawn anus, bad collarbone, fused collarbone, missing collarbone" + options['negative']
-        logger.info(rf"Generating with prompt: {options['prompt']}, sampler: {options['s']}")
-        logger.info(options)
+    if int(options["w"]) > 768 or int(options["h"]) > 768:
+        raise PassToUserException("<code>w/h</code> - Максимальне значення = <code>768 x 768</code>.  /help")
 
-        payload = {
-            "prompt": options["prompt" ],
+    #options['negative'] = "lowres, text, error, missing fingers, extra digit, fewer digits, cropped, (worst quality, low quality:1.4), jpeg artifacts, signature, bad anatomy, extra legs, extra arms, extra fingers, poorly drawn hands, poorly drawn feet, disfigured, out of frame, tiling, bad art, deformed, mutated, blurry, fuzzy, misshaped, mutant, gross, disgusting, ugly, watermark, watermarks," + options['negative']
+    #options['negative'] = "lowres, (((deformed))), bad anatomy, low res, text, error, missing fingers, fused fingers, (poorly drawn hands), extra digit, fewer digits, cropped, (worst quality, low quality:1.4), signature, extra legs, extra arms, extra fingers, poorly drawn hands, poorly drawn feet, disfigured, out of frame, tiling, bad art, deformed, mutation, mutated, fuzzy, misshaped, mutant, gross, disgusting, ugly, watermark, watermarks, fused breasts, bad breasts, poorly drawn breasts, extra breasts, huge haunch, huge thighs, huge calf, bad hands, fused hand, missing hand, disappearing arms, disappearing thigh, disappearing calf, (disappearing legs), poorly drawn legs, bad ears, poorly drawn ears, extra ears, heavy ears, missing ears, fused animal ears, bad face, bad animal ears, poorly drawn animal ears, extra animal ears, heavy animal ears, missing animal ears, one hand with more than 5 fingers, one hand with less than 5 fingers, one hand with more than 5 digit, one hand with less than 5 digit, short arm, (missing arms), missing thighs, missing calf, missing legs, (extra legs), mutation, duplicate, mutilated, poorly drawn hands, more than 1 left hand, more than 1 right hand, deformed, bad asshole, poorly drawn asshole, fused asshole, missing asshole, bad anus, (((bad pussy))), bad crotch, badcrotch seam, fused anus, fused pussy, fused anus, fused crotch, poorly drawn crotch, fused seam, poorly drawn anus, ((poorly drawn pussy)), poorly drawn crotch, (bad thigh gap), missing thigh gap, (fused thigh gap),  (poorly drawn thigh gap), poorly drawn anus, (missing clit), (bad clit), fused clit, colorful clit, pubic hair, bad breasts, poorly drawn breasts, extra breasts, bad hands, fused hand, missing hand, disappearing arms, disappearing thigh, disappearing calf, disappearing legs, fuse dears, bad ears, poorly drawn ears, extra ears, missing limb, (missing arms), bad asshole, poorly drawn asshole, fused asshole, missing asshole, bad anus, bad pussy, bad crotch, seam, fused anus, (fused pussy), fused anus, fused crotch, poorly drawn crotch, fused seam, poorly drawn anus, (poorly drawn pussy), poorly drawn crotch, seam, bad thigh gap, missing thigh gap, fused thigh gap, poorly drawn thigh gap, poorly drawn anus, bad collarbone, fused collarbone, missing collarbone" + options['negative']
+    options['negative'] = "EasyNegative, extra fingers,fewer fingers," + options['negative']
+
+    return options
+    
+def get_payload(options: dict) -> dict:
+    payload = {
+            "prompt": options["prompt"],
             "negative_prompt": options["negative"],
             "seed": int(options["seed"]),
             "cfg_scale": float(options["scale"]),
@@ -199,29 +194,34 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "hr_upscaler": "4x_foolhardy_Remacri",
             "hr_second_pass_steps": 0,
         }
+    return payload
 
-        estimate = float(options["steps"]) / 2.6
-        if float(options["fix"]) > 1:
-            estimate = estimate + float(options["steps"]) * 3.10
-        str_estimate = str(datetime.timedelta(seconds=round(estimate*int(options["batch"]))))
+async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    messsage = update.message
+    try:
+        logger.info(rf"{messsage.text}")
 
-        await messsage.reply_text(rf"""Генерація..
-Дуже приблизний час генерації: {str_estimate}""")
+        options = get_options(messsage.text)
+        payload = get_payload(options)
+        
+        logger.info(options)
+
+        await messsage.reply_text("Генерація..")
         
         context.job_queue.run_once(live_preview_job, 0, chat_id=messsage.chat_id)
 
         async with aiohttp.ClientSession() as session:
             async with session.post("http://192.168.1.89:7860/sdapi/v1/txt2img", json=payload, timeout=1200) as response:
-                if response.status != 200:
-                    raise Exception("Bad response")
-
+            
+                response.raise_for_status()
                 responseJson = await response.json()
 
-                images = list(map(lambda x: InputMediaPhoto(media=io.BytesIO(base64.b64decode(x))), responseJson["images"]))
                 info = json.loads(responseJson["info"])
+
                 ecaped_prompt = html.escape(info["prompt"])
                 escaped_message = html.escape(messsage.text)
-                #Negative prompt: {info["negative_prompt"]}
+
+                images = list(map(lambda x: InputMediaPhoto(io.BytesIO(base64.b64decode(x))), responseJson["images"]))
                 await messsage.reply_media_group(images, parse_mode="HTML", caption=rf"""Prompt: {ecaped_prompt}
 Sampler: {info["sampler_name"]}
 Seed: <code>{info["seed"]}</code>
@@ -235,12 +235,15 @@ Batch: {options["batch"]}
 
                 if options["file"] == "true":
                     documents = []
-                    for i in range(len(responseJson["images"])):
-                        document = InputMediaDocument(media=io.BytesIO(base64.b64decode(responseJson["images"][i])), filename=rf"{random.randint(1, 99999)}_{int(info['seed'])+i}.png")
+                    raw_image_list = list(map(lambda x: io.BytesIO(base64.b64decode(x)), responseJson["images"]))
+                    for i in range(len(raw_image_list)):
+                        document = InputMediaDocument(raw_image_list[i], filename=rf"{random.randint(1, 99999)}_{int(info['seed'])+i}.png")
                         documents.append(document)
                     await messsage.reply_media_group(documents)
 
         logger.info("Successfuly generated")
+    except PassToUserException as uE:
+        await messsage.reply_html(uE.message)
     except Exception as e:
         traceback.print_exc()
         await messsage.reply_text("Сталась помилка, спробуй ще.")
@@ -258,11 +261,10 @@ async def prompt_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 Час очікування: бог його знає.""")
     
 async def live_preview_job(context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.sleep(2)
+    await asyncio.sleep(1)
 
     genMessage = await context.bot.send_photo(chat_id=context.job.chat_id, photo="placeholder.jpg")
     info_message = await context.bot.send_message(chat_id=context.job.chat_id, text="...")
-    #img_message = Message()
 
     async with aiohttp.ClientSession() as session:
         while True:
@@ -277,21 +279,24 @@ async def live_preview_job(context: ContextTypes.DEFAULT_TYPE):
                     await info_message.delete()
                     return
                 
-                try:
-                    if responseJson["current_image"] is not None:
-                        bytesArray = io.BytesIO(base64.b64decode(responseJson["current_image"]))
-                        image = Image.open(bytesArray)
-                        width, height = image.size
-                        image = image.resize((width * 4, height * 4))
-                        buf = io.BytesIO()
-                        image.save(buf, format='PNG')
-                        await info_message.edit_text(text=rf"{round(float(responseJson['progress'])*100)}%",)
-                        await genMessage.edit_media(media=InputMediaPhoto(media=buf.getvalue()))
-                except Exception:
-                    logger.error("Update preview error")
-                    pass
+                if responseJson["current_image"] is None:
+                    continue
 
-            await asyncio.sleep(1)
+                bytesArray = io.BytesIO(base64.b64decode(responseJson["current_image"]))
+                image = Image.open(bytesArray)
+                width, height = image.size
+                image = image.resize((width * 4, height * 4))
+                buf = io.BytesIO()
+                image.save(buf, format='PNG')
+                
+                try:
+                    await info_message.edit_text(text=rf"{round(float(responseJson['progress'])*100)}%",)
+                    await genMessage.edit_media(media=InputMediaPhoto(media=buf.getvalue()))
+                except BadRequest:
+                    logger.error("Update preview error")
+                    await asyncio.sleep(2)
+
+            await asyncio.sleep(2)
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
